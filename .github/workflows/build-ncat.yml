@@ -34,11 +34,14 @@ jobs:
           -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>' `
           | Set-Content $projFile
 
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
       - name: Build Ncat with MSBuild
         shell: cmd
         run: |
           cd nmap
-          # 使用 vcpkg 的工具链文件进行构建，确保自动找到静态库
+          :: 使用双冒号进行 CMD 风格的注释，或者直接删除注释
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
           /p:RuntimeLibrary=MultiThreaded ^
           /p:AdditionalIncludeDirectories="C:\vcpkg\installed\x86-windows-static\include" ^

@@ -46,7 +46,7 @@ jobs:
             $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;user32.lib;gdi32.lib;"
             
             # 【关键修复】抹除 PostBuildEvent，防止寻找不存在的 DLL
-            $content = $content -replace '<PostBuildEvent>[\s\S]*?</PostBuildEvent>', '<PostBuildEvent><Command>echo Static Build Done</Command></PostBuildEvent>'
+            # $content = $content -replace '<PostBuildEvent>[\s\S]*?</PostBuildEvent>', '<PostBuildEvent><Command>echo Static Build Done</Command></PostBuildEvent>'
             
             $content | Set-Content $_.FullName
           }
@@ -74,7 +74,8 @@ jobs:
           cd nmap
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
           /p:VcpkgTriplet=x86-windows-static ^
-          /p:VcpkgEnabled=true
+          /p:VcpkgEnabled=true ^
+          /p:PostBuildEventUseInBuild=false
           
       - name: Check Executable Dependencies
         shell: pwsh

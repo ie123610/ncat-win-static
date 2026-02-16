@@ -23,29 +23,36 @@ jobs:
           $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
           $npcapDir = "$(pwd)/nmap-mswin32-aux/Npcap"
 
-          # 探测 Windows SDK 的 Lib 路径 (针对 x86)
-          # 通常路径类似 C:\Program Files (x86)\Windows Kits\10\Lib\10.0.19041.0\um\x86
+          # 1. 物理搬运：把系统库拷过来，看你还说找不到
           $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Lib"
           $latestSdk = Get-ChildItem -Path $sdkRoot | Sort-Object Name -Descending | Select-Object -First 1
-          $sdkLibPath = Join-Path $latestSdk.FullName "um\x86"
+          $sdkLibDir = Join-Path $latestSdk.FullName "um\x86"
           
-          Write-Host "Detected SDK Lib Path: $sdkLibPath"
-          # 将这个路径存入环境变量供下一步使用
-          echo "SDK_LIB_PATH=$sdkLibPath" >> $env:GITHUB_ENV
+          Write-Host "Copying system libs from $sdkLibDir to $vcpkgLib"
+          copy-item "$sdkLibDir\ws2_32.lib" -Destination "$vcpkgLib\ws2_32.lib" -Force
+          copy-item "$sdkLibDir\crypt32.lib" -Destination "$vcpkgLib\crypt32.lib" -Force
+          copy-item "$sdkLibDir\advapi32.lib" -Destination "$vcpkgLib\advapi32.lib" -Force
+          copy-item "$sdkLibDir\iphlpapi.lib" -Destination "$vcpkgLib\iphlpapi.lib" -Force
+          copy-item "$sdkLibDir\user32.lib" -Destination "$vcpkgLib\user32.lib" -Force
+          copy-item "$sdkLibDir\gdi32.lib" -Destination "$vcpkgLib\gdi32.lib" -Force
 
+          # 2. 修正项目文件 (保持静态链接配置)
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
             
-            # 注入路径，确保最后带有继承符号
+            # 注入路径
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
+            
+            # 这里的依赖列表保持精简，链接器现在会在上面的 Lib 目录里找到所有东西
+            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;"
             
             $content | Set-Content $_.FullName
           }
           
-          # 修复 applink.c
+          # 3. 修复 applink.c (保持现状)
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue
@@ -69,12 +76,9 @@ jobs:
         shell: cmd
         run: |
           cd nmap
-          :: 使用检测到的 SDK 路径，补全 LibraryPath
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
           /p:VcpkgTriplet=x86-windows-static ^
-          /p:VcpkgEnabled=true ^
-          /p:IncludePath="C:\vcpkg\installed\x86-windows-static\include;%CD%\..\nmap-mswin32-aux\Npcap\Include;$(IncludePath)" ^
-          /p:LibraryPath="C:\vcpkg\installed\x86-windows-static\lib;%CD%\..\nmap-mswin32-aux\Npcap\Lib\x86;%SDK_LIB_PATH%;$(LibraryPath)"
+          /p:VcpkgEnabled=true
           
       - name: Check Executable Dependencies
         shell: pwsh

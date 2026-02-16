@@ -23,20 +23,29 @@ jobs:
           $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
           $npcapDir = "$(pwd)/nmap-mswin32-aux/Npcap"
 
+          # 探测 Windows SDK 的 Lib 路径 (针对 x86)
+          # 通常路径类似 C:\Program Files (x86)\Windows Kits\10\Lib\10.0.19041.0\um\x86
+          $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Lib"
+          $latestSdk = Get-ChildItem -Path $sdkRoot | Sort-Object Name -Descending | Select-Object -First 1
+          $sdkLibPath = Join-Path $latestSdk.FullName "um\x86"
+          
+          Write-Host "Detected SDK Lib Path: $sdkLibPath"
+          # 将这个路径存入环境变量供下一步使用
+          echo "SDK_LIB_PATH=$sdkLibPath" >> $env:GITHUB_ENV
+
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
-            # 静态链接 CRT (/MT)
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
             
-            # 仅注入路径，不要去动 <AdditionalDependencies>
+            # 注入路径，确保最后带有继承符号
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
             
             $content | Set-Content $_.FullName
           }
           
-          # 修复 applink.c (保持现状)
+          # 修复 applink.c
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue
@@ -60,14 +69,12 @@ jobs:
         shell: cmd
         run: |
           cd nmap
-          :: 强制指定依赖，但这次把标准库路径通过环境变量或者 Lib 路径补全
-          :: 我们在 AdditionalDependencies 里补上缺失的第三方库名
+          :: 使用检测到的 SDK 路径，补全 LibraryPath
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
           /p:VcpkgTriplet=x86-windows-static ^
           /p:VcpkgEnabled=true ^
-          /p:AdditionalDependencies="libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;user32.lib;gdi32.lib" ^
           /p:IncludePath="C:\vcpkg\installed\x86-windows-static\include;%CD%\..\nmap-mswin32-aux\Npcap\Include;$(IncludePath)" ^
-          /p:LibraryPath="C:\vcpkg\installed\x86-windows-static\lib;%CD%\..\nmap-mswin32-aux\Npcap\Lib\x86;$(LibraryPath)"
+          /p:LibraryPath="C:\vcpkg\installed\x86-windows-static\lib;%CD%\..\nmap-mswin32-aux\Npcap\Lib\x86;%SDK_LIB_PATH%;$(LibraryPath)"
           
       - name: Check Executable Dependencies
         shell: pwsh

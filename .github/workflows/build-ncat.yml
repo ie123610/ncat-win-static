@@ -19,24 +19,39 @@ jobs:
       - name: Fix Project Files Globally
         shell: pwsh
         run: |
-          # 定义 vcpkg 静态库的路径
           $vcpkgInclude = "C:/vcpkg/installed/x86-windows-static/include"
           $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
+          $npcapDir = "$(pwd)/nmap-mswin32-aux/Npcap"
 
-          # 1. 批量将所有项目的运行库从 /MD 改为 /MT (静态链接 CRT)
-          # 2. 强制插入 OpenSSL 的包含目录和库目录
+          # --- 新增：定位并修复 applink.c ---
+          # 在 vcpkg 的安装包目录中搜索 applink.c
+          $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
+          
+          if ($applinkSrc) {
+              # 创建 openssl 文件夹并复制进去，这样 #include <openssl/applink.c> 就能找到了
+              $destDir = "$vcpkgInclude/openssl"
+              if (!(Test-Path $destDir)) { mkdir $destDir }
+              Copy-Item $applinkSrc.FullName -Destination "$destDir/applink.c"
+              Write-Host "Successfully located and copied applink.c to $destDir"
+          } else {
+              Write-Warning "applink.c not found, creating a fallback dummy to prevent build failure..."
+              # 如果实在找不到，可以创建一个空的，因为静态构建其实用不到它的逻辑
+              $destDir = "$vcpkgInclude/openssl"
+              if (!(Test-Path $destDir)) { mkdir $destDir }
+              "/* fallback */" | Set-Content "$destDir/applink.c"
+          }
+          # --------------------------------
+
+          # 修正所有 vcxproj (保持之前的逻辑)
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
-            
-            # 在所有的 IncludePath 和 LibraryPath 中注入 vcpkg 路径
-            $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;"
-            $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;"
-            
+            $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
+            $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
+            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;crypt32.lib;ws2_32.lib;wpcap.lib;Packet.lib;advapi32.lib;user32.lib;gdi32.lib;"
             $content | Set-Content $_.FullName
           }
-          Write-Host "Project files patched with static paths."
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2

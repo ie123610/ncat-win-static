@@ -25,23 +25,18 @@ jobs:
 
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
-            # 1. 静态链接 CRT
+            # 静态链接 CRT (/MT)
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
             
-            # 2. 注入路径，确保最后带有继承符号 $(IncludePath) 和 $(LibraryPath)
+            # 仅注入路径，不要去动 <AdditionalDependencies>
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
-            
-            # 3. 核心修复：清理 AdditionalDependencies
-            # 不要在这里写系统库（crypt32 等），只写我们额外引入的第三方静态库
-            # 系统库让 MSBuild 通过默认搜索路径去寻找
-            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;"
             
             $content | Set-Content $_.FullName
           }
           
-          # 修复 applink.c (保持之前的逻辑)
+          # 修复 applink.c (保持现状)
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue
@@ -65,13 +60,15 @@ jobs:
         shell: cmd
         run: |
           cd nmap
-          :: 重点：显式声明使用 vcpkg 的静态集成，并补全库搜索路径
+          :: 强制指定依赖，但这次把标准库路径通过环境变量或者 Lib 路径补全
+          :: 我们在 AdditionalDependencies 里补上缺失的第三方库名
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
           /p:VcpkgTriplet=x86-windows-static ^
           /p:VcpkgEnabled=true ^
+          /p:AdditionalDependencies="libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;user32.lib;gdi32.lib" ^
           /p:IncludePath="C:\vcpkg\installed\x86-windows-static\include;%CD%\..\nmap-mswin32-aux\Npcap\Include;$(IncludePath)" ^
           /p:LibraryPath="C:\vcpkg\installed\x86-windows-static\lib;%CD%\..\nmap-mswin32-aux\Npcap\Lib\x86;$(LibraryPath)"
-
+          
       - name: Check Executable Dependencies
         shell: pwsh
         run: |

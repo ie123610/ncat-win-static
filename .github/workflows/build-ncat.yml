@@ -61,12 +61,21 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Download Npcap SDK
+      - name: Clone Npcap SDK
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile "npcap-sdk.zip"
-          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "nmap-mswin32-aux/Npcap"
-          # 注意：Nmap 源码默认寻找同级目录下的 nmap-mswin32-aux 文件夹
+          # 创建父目录
+          mkdir nmap-mswin32-aux -ErrorAction SilentlyContinue
+          # 克隆 SDK 仓库到指定目录
+          git clone --depth 1 https://github.com/nmap/npcap-sdk.git nmap-mswin32-aux/Npcap
+          
+          # 验证下载是否成功
+          if (Test-Path "nmap-mswin32-aux/Npcap/Include/pcap.h") {
+              Write-Host "Npcap SDK cloned successfully."
+          } else {
+              Write-Error "Failed to clone Npcap SDK."
+              exit 1
+          }
 
       - name: Build Ncat
         shell: cmd

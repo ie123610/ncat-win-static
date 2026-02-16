@@ -25,7 +25,6 @@ jobs:
 
           # 1. 精准探测 Windows SDK 库路径
           $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Lib"
-          # 过滤掉 winv6.3 这种干扰项，只找 10.0 开头的正式版本文件夹
           $latestSdk = Get-ChildItem -Path $sdkRoot -Filter "10.0.*" | Sort-Object Name -Descending | Select-Object -First 1
           
           if ($null -eq $latestSdk) {
@@ -36,7 +35,7 @@ jobs:
           $sdkLibDir = Join-Path $latestSdk.FullName "um\x86"
           Write-Host "Real SDK Lib Path detected: $sdkLibDir"
 
-          # 2. 物理搬运系统库 (带容错检查)
+          # 2. 物理搬运系统库 (增加了 user32.lib 和 gdi32.lib)
           $libsToCopy = @("ws2_32.lib", "crypt32.lib", "advapi32.lib", "iphlpapi.lib", "user32.lib", "gdi32.lib", "shell32.lib")
           foreach ($lib in $libsToCopy) {
               $src = Join-Path $sdkLibDir $lib
@@ -48,7 +47,7 @@ jobs:
               }
           }
 
-          # 3. 修正项目文件 (逻辑保持不变)
+          # 3. 修正项目文件
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
             # 静态链接 CRT
@@ -59,13 +58,13 @@ jobs:
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
             
-            # 强制指定关键依赖
-            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;"
+            # 这里的依赖列表补全 user32.lib 和 gdi32.lib
+            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;user32.lib;gdi32.lib;"
             
             $content | Set-Content $_.FullName
           }
           
-          # 4. 修复 applink.c (逻辑保持不变)
+          # 4. 修复 applink.c (保持现状)
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue

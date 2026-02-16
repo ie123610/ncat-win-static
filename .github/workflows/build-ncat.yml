@@ -41,6 +41,13 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      - name: Download Npcap SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile "npcap-sdk.zip"
+          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "nmap-mswin32-aux/Npcap"
+          # 注意：Nmap 源码默认寻找同级目录下的 nmap-mswin32-aux 文件夹
+
       - name: Build Ncat
         shell: cmd
         run: |

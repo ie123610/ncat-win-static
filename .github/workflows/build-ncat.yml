@@ -23,22 +23,35 @@ jobs:
           $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
           $npcapDir = "$(pwd)/nmap-mswin32-aux/Npcap"
 
-          # 1. 物理搬运：把系统库拷过来，看你还说找不到
+          # 1. 精准探测 Windows SDK 库路径
           $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Lib"
-          $latestSdk = Get-ChildItem -Path $sdkRoot | Sort-Object Name -Descending | Select-Object -First 1
-          $sdkLibDir = Join-Path $latestSdk.FullName "um\x86"
+          # 过滤掉 winv6.3 这种干扰项，只找 10.0 开头的正式版本文件夹
+          $latestSdk = Get-ChildItem -Path $sdkRoot -Filter "10.0.*" | Sort-Object Name -Descending | Select-Object -First 1
           
-          Write-Host "Copying system libs from $sdkLibDir to $vcpkgLib"
-          copy-item "$sdkLibDir\ws2_32.lib" -Destination "$vcpkgLib\ws2_32.lib" -Force
-          copy-item "$sdkLibDir\crypt32.lib" -Destination "$vcpkgLib\crypt32.lib" -Force
-          copy-item "$sdkLibDir\advapi32.lib" -Destination "$vcpkgLib\advapi32.lib" -Force
-          copy-item "$sdkLibDir\iphlpapi.lib" -Destination "$vcpkgLib\iphlpapi.lib" -Force
-          copy-item "$sdkLibDir\user32.lib" -Destination "$vcpkgLib\user32.lib" -Force
-          copy-item "$sdkLibDir\gdi32.lib" -Destination "$vcpkgLib\gdi32.lib" -Force
+          if ($null -eq $latestSdk) {
+              Write-Error "Could not find a valid Windows 10 SDK folder in $sdkRoot"
+              exit 1
+          }
 
-          # 2. 修正项目文件 (保持静态链接配置)
+          $sdkLibDir = Join-Path $latestSdk.FullName "um\x86"
+          Write-Host "Real SDK Lib Path detected: $sdkLibDir"
+
+          # 2. 物理搬运系统库 (带容错检查)
+          $libsToCopy = @("ws2_32.lib", "crypt32.lib", "advapi32.lib", "iphlpapi.lib", "user32.lib", "gdi32.lib", "shell32.lib")
+          foreach ($lib in $libsToCopy) {
+              $src = Join-Path $sdkLibDir $lib
+              if (Test-Path $src) {
+                  Copy-Item $src -Destination "$vcpkgLib\$lib" -Force
+                  Write-Host "Successfully copied $lib"
+              } else {
+                  Write-Warning "Missing $lib in SDK directory!"
+              }
+          }
+
+          # 3. 修正项目文件 (逻辑保持不变)
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
+            # 静态链接 CRT
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
             
@@ -46,13 +59,13 @@ jobs:
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
             
-            # 这里的依赖列表保持精简，链接器现在会在上面的 Lib 目录里找到所有东西
-            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;"
+            # 强制指定关键依赖
+            $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;"
             
             $content | Set-Content $_.FullName
           }
           
-          # 3. 修复 applink.c (保持现状)
+          # 4. 修复 applink.c (逻辑保持不变)
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue

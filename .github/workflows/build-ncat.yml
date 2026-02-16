@@ -12,6 +12,22 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/nmap/nmap.git
 
+      - name: Clone Npcap SDK
+        shell: pwsh
+        run: |
+          # 创建父目录
+          mkdir nmap-mswin32-aux -ErrorAction SilentlyContinue
+          # 克隆 SDK 仓库到指定目录
+          git clone --depth 1 https://github.com/nmap/npcap.git nmap-mswin32-aux/Npcap
+          
+          # 验证下载是否成功
+          if (Test-Path "nmap-mswin32-aux/Npcap/Include/pcap.h") {
+              Write-Host "Npcap SDK cloned successfully."
+          } else {
+              Write-Error "Failed to clone Npcap SDK."
+              exit 1
+          }
+      
       - name: Install Static OpenSSL via vcpkg
         run: |
           vcpkg install openssl:x86-windows-static
@@ -45,8 +61,6 @@ jobs:
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
             $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;user32.lib;gdi32.lib;"
             
-            # 【关键修复】抹除 PostBuildEvent，防止寻找不存在的 DLL
-            # $content = $content -replace '<PostBuildEvent>[\s\S]*?</PostBuildEvent>', '<PostBuildEvent><Command>echo Static Build Done</Command></PostBuildEvent>'
             
             $content | Set-Content $_.FullName
           }
@@ -60,22 +74,6 @@ jobs:
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
-
-      - name: Clone Npcap SDK
-        shell: pwsh
-        run: |
-          # 创建父目录
-          mkdir nmap-mswin32-aux -ErrorAction SilentlyContinue
-          # 克隆 SDK 仓库到指定目录
-          git clone --depth 1 https://github.com/nmap/npcap-sdk.git nmap-mswin32-aux/Npcap
-          
-          # 验证下载是否成功
-          if (Test-Path "nmap-mswin32-aux/Npcap/Include/pcap.h") {
-              Write-Host "Npcap SDK cloned successfully."
-          } else {
-              Write-Error "Failed to clone Npcap SDK."
-              exit 1
-          }
 
       - name: Build Ncat
         shell: cmd

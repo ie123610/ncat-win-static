@@ -12,12 +12,43 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/nmap/nmap.git
 
-      - name: Download Npcap SDK
+      - name: Download Latest Npcap SDK
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.16.zip" -OutFile "npcap-sdk.zip"
-          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "nmap-mswin32-aux/Npcap"
-          # 注意：Nmap 源码默认寻找同级目录下的 nmap-mswin32-aux 文件夹
+          $auxDir = "nmap-mswin32-aux"
+          if (!(Test-Path $auxDir)) { New-Item -ItemType Directory -Path $auxDir }
+
+          # 1. 爬取下载页面并提取最新的 SDK ZIP 链接
+          Write-Host "Searching for latest Npcap SDK version..."
+          $html = Invoke-WebRequest -Uri "https://npcap.com/dist/" -UseBasicParsing
+          
+          # 正则匹配找到最新的 npcap-sdk-*.zip 文件名
+          $sdkFile = $html.Links | Where-Object { $_.href -match "npcap-sdk-[\d\.]+\.zip" } | Select-Object -ExpandProperty href -Last 1
+          
+          if (-not $sdkFile) {
+              Write-Error "Could not find Npcap SDK link on the distribution page."
+              exit 1
+          }
+
+          $downloadUrl = "https://npcap.com/dist/$sdkFile"
+          Write-Host "Found latest SDK: $sdkFile. Downloading from $downloadUrl..."
+
+          # 2. 下载并解压
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "npcap-sdk.zip"
+          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "$auxDir/temp"
+
+          # 3. 统一文件夹名称 (去除版本号)
+          $extractedDir = Get-ChildItem "$auxDir/temp" | Where-Object { $_.PSIsContainer } | Select-Object -First 1
+          $finalPath = "$auxDir/Npcap"
+          
+          if (Test-Path $finalPath) { Remove-Item $finalPath -Recurse -Force }
+          Move-Item -Path $extractedDir.FullName -Destination $finalPath
+
+          # 4. 清理
+          Remove-Item "$auxDir/temp" -Recurse -Force
+          Remove-Item "npcap-sdk.zip" -Force
+          
+          Write-Host "Npcap SDK (Latest) is ready at $finalPath"
       
       - name: Install Static OpenSSL via vcpkg
         run: |

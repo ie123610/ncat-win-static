@@ -18,54 +18,44 @@ jobs:
           $auxDir = "nmap-mswin32-aux"
           if (!(Test-Path $auxDir)) { New-Item -ItemType Directory -Path $auxDir }
 
-          # 1. 抓取页面内容
+          # 1. 抓取并提取最新链接
           $siteUrl = "https://npcap.com"
           $distUrl = "https://npcap.com/dist/"
-          Write-Host "Fetching Npcap SDK list from $distUrl"
           $response = Invoke-WebRequest -Uri $distUrl -UseBasicParsing
-
-          # 2. 提取并排序 (修正路径提取逻辑)
           $latestSdk = $response.Links | 
               Where-Object { $_.href -match "npcap-sdk-([\d\.]+)\.zip" } | 
-              Select-Object @{
-                  Name = "Version"; 
-                  Expression = { [version]($Matches[1]) }
-              }, @{
-                  Name = "CleanPath"; 
-                  Expression = { 
-                      # 如果 href 是 "/dist/xxx.zip"，就去掉前面的路径，只要文件名
-                      $_.href.Split('/')[-1] 
-                  }
-              } | 
-              Sort-Object Version -Descending | 
-              Select-Object -First 1
+              Select-Object @{Name="Version"; Expression={[version]($Matches[1])}}, @{Name="FileName"; Expression={$_.href.Split('/')[-1]}} | 
+              Sort-Object Version -Descending | Select-Object -First 1
 
-          if (-not $latestSdk) {
-              Write-Error "Could not find any valid Npcap SDK links."
+          # 2. 下载
+          $downloadUrl = "$distUrl$($latestSdk.FileName)"
+          Write-Host "Downloading $downloadUrl"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "npcap-sdk.zip"
+
+          # 3. 彻底清理并解压
+          $tempDir = "$auxDir/temp_extract"
+          if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath $tempDir
+
+          # 4. 关键：扁平化处理
+          # 无论压缩包里包了几层，我们直接把含有 'Include' 的那一层挪到 $auxDir/Npcap
+          $targetNpcapDir = "$auxDir/Npcap"
+          if (Test-Path $targetNpcapDir) { Remove-Item $targetNpcapDir -Recurse -Force }
+          
+          $realSdkDir = Get-ChildItem -Path $tempDir -Recurse -Filter "pcap.h" | Select-Object -First 1
+          if ($null -eq $realSdkDir) { throw "Could not find pcap.h in the zip!" }
+          
+          # 向上取两级，拿到 Include 的父目录
+          $sdkRoot = $realSdkDir.Directory.Parent.FullName 
+          Move-Item -Path $sdkRoot -Destination $targetNpcapDir
+
+          # 5. 最后验证 (非常重要)
+          if (Test-Path "$targetNpcapDir/Include/pcap.h") {
+              Write-Host "Verified: pcap.h is at $targetNpcapDir/Include/pcap.h"
+          } else {
+              Write-Error "Path verification failed!"
               exit 1
           }
-
-          # 3. 拼接正确的下载地址
-          # 确保最终格式是 https://npcap.com/dist/npcap-sdk-1.16.zip
-          $sdkFileName = $latestSdk.CleanPath
-          $downloadUrl = "$distUrl$sdkFileName"
-          Write-Host "Found latest version: $($latestSdk.Version). Downloading from $downloadUrl"
-
-          # 4. 执行下载和解压
-          Invoke-WebRequest -Uri $downloadUrl -OutFile "npcap-sdk.zip"
-          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "$auxDir/temp"
-          
-          # 文件夹归一化
-          $extractedDir = Get-ChildItem "$auxDir/temp" | Where-Object { $_.PSIsContainer } | Select-Object -First 1
-          $finalPath = "$auxDir/Npcap"
-          if (Test-Path $finalPath) { Remove-Item $finalPath -Recurse -Force }
-          Move-Item -Path $extractedDir.FullName -Destination $finalPath
-
-          # 5. 清理
-          Remove-Item "$auxDir/temp" -Recurse -Force
-          Remove-Item "npcap-sdk.zip" -Force
-          
-          Write-Host "SUCCESS: Npcap SDK at $finalPath"
       
       - name: Install Static OpenSSL via vcpkg
         run: |

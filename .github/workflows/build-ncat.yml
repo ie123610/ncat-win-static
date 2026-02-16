@@ -23,56 +23,40 @@ jobs:
           $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
           $npcapDir = "$(pwd)/nmap-mswin32-aux/Npcap"
 
-          # 1. 精准探测 Windows SDK 库路径
+          # 1. 精准探测并物理搬运库 (保持现状)
           $sdkRoot = "C:\Program Files (x86)\Windows Kits\10\Lib"
           $latestSdk = Get-ChildItem -Path $sdkRoot -Filter "10.0.*" | Sort-Object Name -Descending | Select-Object -First 1
-          
-          if ($null -eq $latestSdk) {
-              Write-Error "Could not find a valid Windows 10 SDK folder in $sdkRoot"
-              exit 1
-          }
-
           $sdkLibDir = Join-Path $latestSdk.FullName "um\x86"
-          Write-Host "Real SDK Lib Path detected: $sdkLibDir"
-
-          # 2. 物理搬运系统库 (增加了 user32.lib 和 gdi32.lib)
           $libsToCopy = @("ws2_32.lib", "crypt32.lib", "advapi32.lib", "iphlpapi.lib", "user32.lib", "gdi32.lib", "shell32.lib")
           foreach ($lib in $libsToCopy) {
               $src = Join-Path $sdkLibDir $lib
-              if (Test-Path $src) {
-                  Copy-Item $src -Destination "$vcpkgLib\$lib" -Force
-                  Write-Host "Successfully copied $lib"
-              } else {
-                  Write-Warning "Missing $lib in SDK directory!"
-              }
+              if (Test-Path $src) { Copy-Item $src -Destination "$vcpkgLib\$lib" -Force }
           }
 
-          # 3. 修正项目文件
+          # 2. 修正项目文件
           Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
             $content = Get-Content $_.FullName
             # 静态链接 CRT
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
             $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
             
-            # 注入路径
+            # 注入路径和依赖
             $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;$npcapDir/Include;"
             $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;$npcapDir/Lib/x86;"
-            
-            # 这里的依赖列表补全 user32.lib 和 gdi32.lib
             $content = $content -replace '<AdditionalDependencies>', "<AdditionalDependencies>libssl.lib;libcrypto.lib;wpcap.lib;Packet.lib;ws2_32.lib;crypt32.lib;advapi32.lib;iphlpapi.lib;shell32.lib;user32.lib;gdi32.lib;"
+            
+            # 【关键修复】抹除 PostBuildEvent，防止寻找不存在的 DLL
+            $content = $content -replace '<PostBuildEvent>[\s\S]*?</PostBuildEvent>', '<PostBuildEvent><Command>echo Static Build Done</Command></PostBuildEvent>'
             
             $content | Set-Content $_.FullName
           }
           
-          # 4. 修复 applink.c (保持现状)
+          # 3. 修复 applink.c (保持现状)
           $applinkSrc = Get-ChildItem -Path "C:/vcpkg/buildtrees/openssl" -Filter "applink.c" -Recurse | Select-Object -First 1
           $destDir = "$vcpkgInclude/openssl"
           mkdir $destDir -ErrorAction SilentlyContinue
-          if ($applinkSrc) {
-              Copy-Item $applinkSrc.FullName -Destination "$destDir/applink.c"
-          } else {
-              "extern int _CRT_fmode; void _Applink(void) { (void)_CRT_fmode; }" | Set-Content "$destDir/applink.c"
-          }
+          if ($applinkSrc) { Copy-Item $applinkSrc.FullName -Destination "$destDir/applink.c" }
+          else { "extern int _CRT_fmode; void _Applink(void) { (void)_CRT_fmode; }" | Set-Content "$destDir/applink.c" }
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -98,8 +82,8 @@ jobs:
           # 简单检查是否生成成功
           ls nmap/ncat/Release/ncat.exe
 
-      - name: Upload Ncat Binary
+      - name: Upload Ncat Executable
         uses: actions/upload-artifact@v4
         with:
-          name: ncat-static-x86
+          name: ncat-static-win32
           path: nmap/ncat/Release/ncat.exe

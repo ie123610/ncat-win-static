@@ -18,29 +18,43 @@ jobs:
           $auxDir = "nmap-mswin32-aux"
           if (!(Test-Path $auxDir)) { New-Item -ItemType Directory -Path $auxDir }
 
-          # 1. 爬取下载页面并提取最新的 SDK ZIP 链接
-          Write-Host "Searching for latest Npcap SDK version..."
-          $html = Invoke-WebRequest -Uri "https://npcap.com/dist/" -UseBasicParsing
-          
-          # 正则匹配找到最新的 npcap-sdk-*.zip 文件名
-          $sdkFile = $html.Links | Where-Object { $_.href -match "npcap-sdk-[\d\.]+\.zip" } | Select-Object -ExpandProperty href -Last 1
-          
-          if (-not $sdkFile) {
-              Write-Error "Could not find Npcap SDK link on the distribution page."
+          # 1. 抓取页面内容
+          $baseUrl = "https://npcap.com/dist/"
+          Write-Host "Fetching Npcap SDK list from $baseUrl"
+          $response = Invoke-WebRequest -Uri $baseUrl -UseBasicParsing
+
+          # 2. 提取所有满足格式的链接，并进行智能排序
+          # 匹配模式：npcap-sdk- (数字.数字) .zip
+          $latestSdk = $response.Links | 
+              Where-Object { $_.href -match "npcap-sdk-([\d\.]+)\.zip" } | 
+              Select-Object @{
+                  Name = "Version"; 
+                  Expression = { [version]($Matches[1]) } # 将字符串转为 Version 对象进行数值比较
+              }, @{
+                  Name = "FileName"; 
+                  Expression = { $_.href }
+              } | 
+              Sort-Object Version -Descending | # 按版本号从大到小排序
+              Select-Object -First 1           # 取最大的一个
+
+          if (-not $latestSdk) {
+              Write-Error "Could not find any valid Npcap SDK links."
               exit 1
           }
 
-          $downloadUrl = "https://npcap.com/dist/$sdkFile"
-          Write-Host "Found latest SDK: $sdkFile. Downloading from $downloadUrl..."
+          $sdkFileName = $latestSdk.FileName
+          Write-Host "Found latest version: $($latestSdk.Version). File: $sdkFileName"
 
-          # 2. 下载并解压
+          # 3. 下载并处理
+          $downloadUrl = "$baseUrl$sdkFileName"
           Invoke-WebRequest -Uri $downloadUrl -OutFile "npcap-sdk.zip"
+          
+          # 解压
           Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "$auxDir/temp"
-
-          # 3. 统一文件夹名称 (去除版本号)
+          
+          # 文件夹归一化：将 npcap-sdk-x.xx 重命名为 Npcap
           $extractedDir = Get-ChildItem "$auxDir/temp" | Where-Object { $_.PSIsContainer } | Select-Object -First 1
           $finalPath = "$auxDir/Npcap"
-          
           if (Test-Path $finalPath) { Remove-Item $finalPath -Recurse -Force }
           Move-Item -Path $extractedDir.FullName -Destination $finalPath
 
@@ -48,7 +62,7 @@ jobs:
           Remove-Item "$auxDir/temp" -Recurse -Force
           Remove-Item "npcap-sdk.zip" -Force
           
-          Write-Host "Npcap SDK (Latest) is ready at $finalPath"
+          Write-Host "SUCCESS: Npcap SDK $($latestSdk.Version) is ready at $finalPath"
       
       - name: Install Static OpenSSL via vcpkg
         run: |

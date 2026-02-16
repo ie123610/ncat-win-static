@@ -1,0 +1,57 @@
+name: Build Static Ncat x86
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2019 # Nmap 源码对 VS2019 的兼容性最好
+
+    steps:
+      - name: Checkout Nmap Source
+        run: |
+          # 建议克隆特定分支或最新 tag 以保证稳定性
+          git clone --depth 1 https://github.com/nmap/nmap.git
+
+      - name: Setup vcpkg
+        run: |
+          vcpkg integrate install
+
+      - name: Install Static Dependencies
+        # 安装静态链接所需的 OpenSSL (x86)
+        run: |
+          vcpkg install openssl:x86-windows-static
+
+      - name: Configure Ncat Solution
+        shell: pwsh
+        run: |
+          cd nmap/ncat
+          # 核心步骤：替换项目文件中的运行库为静态链接 (/MT)
+          # 并将 vcpkg 的 OpenSSL 路径指向工程
+          $projFile = "ncat.vcxproj"
+          (Get-Content $projFile) `
+          -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>' `
+          -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>' `
+          | Set-Content $projFile
+
+      - name: Build Ncat with MSBuild
+        shell: cmd
+        run: |
+          cd nmap
+          # 使用 vcpkg 的工具链文件进行构建，确保自动找到静态库
+          msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
+          /p:RuntimeLibrary=MultiThreaded ^
+          /p:AdditionalIncludeDirectories="C:\vcpkg\installed\x86-windows-static\include" ^
+          /p:AdditionalLibraryDirectories="C:\vcpkg\installed\x86-windows-static\lib"
+
+      - name: Check Executable Dependencies
+        shell: pwsh
+        run: |
+          # 简单检查是否生成成功
+          ls nmap/ncat/Release/ncat.exe
+
+      - name: Upload Ncat Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ncat-static-x86
+          path: nmap/ncat/Release/ncat.exe

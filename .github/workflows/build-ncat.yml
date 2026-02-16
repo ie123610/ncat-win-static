@@ -6,46 +6,52 @@ on:
 jobs:
   build:
     runs-on: windows-2019 # Nmap 源码对 VS2019 的兼容性最好
-
     steps:
+       
       - name: Checkout Nmap Source
         run: |
-          # 建议克隆特定分支或最新 tag 以保证稳定性
           git clone --depth 1 https://github.com/nmap/nmap.git
 
-      - name: Setup vcpkg
-        run: |
-          vcpkg integrate install
-
-      - name: Install Static Dependencies
-        # 安装静态链接所需的 OpenSSL (x86)
+      - name: Install Static OpenSSL via vcpkg
         run: |
           vcpkg install openssl:x86-windows-static
 
-      - name: Configure Ncat Solution
+      - name: Fix Project Files Globally
         shell: pwsh
         run: |
-          cd nmap/ncat
-          # 核心步骤：替换项目文件中的运行库为静态链接 (/MT)
-          # 并将 vcpkg 的 OpenSSL 路径指向工程
-          $projFile = "ncat.vcxproj"
-          (Get-Content $projFile) `
-          -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>' `
-          -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>' `
-          | Set-Content $projFile
+          # 定义 vcpkg 静态库的路径
+          $vcpkgInclude = "C:/vcpkg/installed/x86-windows-static/include"
+          $vcpkgLib = "C:/vcpkg/installed/x86-windows-static/lib"
+
+          # 1. 批量将所有项目的运行库从 /MD 改为 /MT (静态链接 CRT)
+          # 2. 强制插入 OpenSSL 的包含目录和库目录
+          Get-ChildItem -Recurse *.vcxproj | ForEach-Object {
+            $content = Get-Content $_.FullName
+            $content = $content -replace '<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreaded</RuntimeLibrary>'
+            $content = $content -replace '<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>', '<RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>'
+            
+            # 在所有的 IncludePath 和 LibraryPath 中注入 vcpkg 路径
+            $content = $content -replace '<AdditionalIncludeDirectories>', "<AdditionalIncludeDirectories>$vcpkgInclude;"
+            $content = $content -replace '<AdditionalLibraryDirectories>', "<AdditionalLibraryDirectories>$vcpkgLib;"
+            
+            $content | Set-Content $_.FullName
+          }
+          Write-Host "Project files patched with static paths."
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build Ncat with MSBuild
+      - name: Build Ncat
         shell: cmd
         run: |
           cd nmap
-          :: 使用双冒号进行 CMD 风格的注释，或者直接删除注释
+          :: 编译整个 ncat 解决方案，确保依赖项同步编译
+          :: 使用 /p:VcpkgTriplet 强制所有子项目识别静态库
           msbuild ncat/ncat.vcxproj /p:Configuration=Release /p:Platform=Win32 ^
-          /p:RuntimeLibrary=MultiThreaded ^
-          /p:AdditionalIncludeDirectories="C:\vcpkg\installed\x86-windows-static\include" ^
-          /p:AdditionalLibraryDirectories="C:\vcpkg\installed\x86-windows-static\lib"
+          /p:VcpkgTriplet=x86-windows-static ^
+          /p:VcpkgEnabled=true ^
+          /p:IncludePath="C:\vcpkg\installed\x86-windows-static\include;$(IncludePath)" ^
+          /p:LibraryPath="C:\vcpkg\installed\x86-windows-static\lib;$(LibraryPath)"
 
       - name: Check Executable Dependencies
         shell: pwsh
